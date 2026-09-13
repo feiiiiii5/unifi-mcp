@@ -45,24 +45,28 @@ logger.info("Using global ConnectionManager instance.")
 logger.info("Using global Manager instances.")
 
 
-async def start_event_listener_if_enabled(*, config, event_manager) -> bool:
+async def start_event_listener_if_enabled(*, config, connection_manager, event_manager) -> bool:
     """Start the websocket event listener whenever it is enabled (#680).
 
     Startup must not depend on the boot connect succeeding: the listener owns
     the backoff/reconnect loop, which treats "not connected" as a normal
-    state. Previously this ran only inside the ``initialize()`` success branch
-    (and additionally required an available session), so a transient blip at
-    boot left ``unifi_recent_events`` reporting ``listening=false`` for the
-    life of the process. Returns True when listening was started.
+    state. The websocket still requires configured session credentials; an
+    API-key-only process and an active API-key fallback must not start it.
+    Returns True when listening was started.
     """
     from unifi_core.config_helpers import parse_config_bool
 
     # It feeds unifi_recent_events; without it that buffer can never fill.
-    ws_enabled_raw = (
-        config.network.events.get("websocket_enabled", True) if hasattr(config, "network") else True
-    )
+    ws_enabled_raw = config.network.events.get("websocket_enabled", True) if hasattr(config, "network") else True
     if not parse_config_bool(ws_enabled_raw, default=True):
         logger.info("Network event websocket disabled by config.")
+        return False
+    auth_status = connection_manager.authentication_status
+    if not auth_status.session_configured:
+        logger.info("Network event websocket unavailable without session credentials.")
+        return False
+    if auth_status.api_key_available:
+        logger.info("Network event websocket unavailable while the API-key fallback is active.")
         return False
     try:
         await event_manager.start_listening()
@@ -98,7 +102,11 @@ async def main_async():
         else:
             logger.info("Global Unifi connection initialized successfully from main_async.")
 
-        await start_event_listener_if_enabled(config=config, event_manager=event_manager)
+        await start_event_listener_if_enabled(
+            config=config,
+            connection_manager=connection_manager,
+            event_manager=event_manager,
+        )
 
         # ---- Register tools ----
         await register_tools_for_mode(

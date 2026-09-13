@@ -1009,6 +1009,27 @@ class ConnectionManager:
 
         return True
 
+    async def ensure_session_connected(self) -> bool:
+        """Ensure a session-authenticated controller is available.
+
+        Event websockets are session-only. Retry the configured username and
+        password route after a failed boot connection, but leave an active
+        API-key inventory fallback intact.
+        """
+        auth_status = self.authentication_status
+        if not auth_status.session_configured or auth_status.api_key_available:
+            return False
+        if auth_status.session_available:
+            return await self.ensure_connected()
+
+        async with self._initialize_lock:
+            auth_status = self.authentication_status
+            if auth_status.api_key_available:
+                return False
+            if auth_status.session_available:
+                return True
+            return await self._initialize_session()
+
     async def reauthenticate(self) -> bool:
         """Refresh the controller login for the current session generation.
 

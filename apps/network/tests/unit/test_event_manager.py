@@ -409,7 +409,7 @@ class TestWebsocketLifecycle:
         cm = MagicMock()
         cm.reconnect_blocked = False
         cm.reconnect_cooldown_active = False
-        cm.ensure_connected = AsyncMock(return_value=True)
+        cm.ensure_session_connected = AsyncMock(return_value=True)
         cm.reauthenticate = AsyncMock(return_value=True)
         cm.controller = self._controller()
         return cm
@@ -500,7 +500,7 @@ class TestWebsocketLifecycle:
                 cm.controller = second
             return True
 
-        cm.ensure_connected = AsyncMock(side_effect=_ensure)
+        cm.ensure_session_connected = AsyncMock(side_effect=_ensure)
         mgr = EventManager(cm)
         await mgr.start_listening()
         await self._wait(second.started)
@@ -535,7 +535,7 @@ class TestWebsocketLifecycle:
         await self._wait(sleeps.reached)
         await mgr.stop_listening()
 
-        cm.ensure_connected.assert_not_awaited()
+        cm.ensure_session_connected.assert_not_awaited()
         cm.controller.start_websocket.assert_not_awaited()
         assert sleeps == sorted(sleeps)
 
@@ -649,13 +649,13 @@ class TestWebsocketHealth(TestWebsocketLifecycle):
 
         cm.reconnect_blocked = True  # latched from an earlier terminal auth error
         cm.reconnect_cooldown_active = False  # ...but the cool-down has expired
-        cm.ensure_connected = AsyncMock(return_value=False)  # the half-open attempt fails
+        cm.ensure_session_connected = AsyncMock(return_value=False)  # the half-open attempt fails
         sleeps.until = 1
         mgr = EventManager(cm)
         await mgr.start_listening()
         await self._wait(sleeps.reached)
 
-        cm.ensure_connected.assert_awaited()
+        cm.ensure_session_connected.assert_awaited()
         await mgr.stop_listening()
 
     @pytest.mark.asyncio
@@ -871,7 +871,7 @@ class TestWebsocketHealth(TestWebsocketLifecycle):
         from unifi_core.network.managers.event_manager import EventManager
 
         if case == "not_connected":
-            cm.ensure_connected = AsyncMock(return_value=False)
+            cm.ensure_session_connected = AsyncMock(return_value=False)
         else:
             cm.controller = None
         sleeps.until = 2

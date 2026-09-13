@@ -21,7 +21,9 @@ def _startup(
     websocket_enabled: bool,
     listener: AsyncMock | None = None,
     transports: AsyncMock | None = None,
+    session_configured: bool = True,
     session_available: bool = True,
+    api_key_configured: bool = False,
 ):
     events = dict(getattr(config.network, "events", {}) or {})
     events["websocket_enabled"] = websocket_enabled
@@ -33,7 +35,12 @@ def _startup(
             type(network_main.connection_manager),
             "authentication_status",
             new_callable=PropertyMock,
-            return_value=AuthenticationStatus(session_available=connected and session_available),
+            return_value=AuthenticationStatus(
+                session_configured=session_configured,
+                api_key_configured=api_key_configured,
+                session_available=connected and session_available,
+                api_key_available=connected and api_key_configured and not session_available,
+            ),
         ),
         patch.object(network_main.event_manager, "start_listening", listener or AsyncMock()) as started,
         patch.object(network_main.event_manager, "stop_listening", AsyncMock()) as stopped,
@@ -51,14 +58,41 @@ def test_the_listener_is_started_on_a_successful_websocket_enabled_startup() -> 
         assert ran.await_count == 1, "startup never reached its transports"
 
 
-def test_the_listener_is_not_started_when_the_connection_fails() -> None:
+def test_the_listener_is_started_when_the_boot_connection_fails() -> None:
     with _startup(connected=False, websocket_enabled=True) as (started, _, _):
         asyncio.run(network_main.main_async())
-        started.assert_not_awaited()
+        started.assert_awaited_once()
 
 
 def test_key_only_startup_does_not_start_a_session_websocket() -> None:
-    with _startup(connected=True, websocket_enabled=True, session_available=False) as (started, _, ran):
+    with _startup(
+        connected=True,
+        websocket_enabled=True,
+        session_configured=False,
+        session_available=False,
+        api_key_configured=True,
+    ) as (
+        started,
+        _,
+        ran,
+    ):
+        asyncio.run(network_main.main_async())
+        started.assert_not_awaited()
+        assert ran.await_count == 1
+
+
+def test_dual_auth_fallback_does_not_start_a_session_websocket() -> None:
+    with _startup(
+        connected=True,
+        websocket_enabled=True,
+        session_configured=True,
+        session_available=False,
+        api_key_configured=True,
+    ) as (
+        started,
+        _,
+        ran,
+    ):
         asyncio.run(network_main.main_async())
         started.assert_not_awaited()
         assert ran.await_count == 1

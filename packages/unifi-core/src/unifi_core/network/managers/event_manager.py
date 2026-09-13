@@ -296,7 +296,7 @@ class EventManager:
                 # the retry or an expired cool-down would never be tried.
                 if self._cm.reconnect_cooldown_active:
                     raise _ListenerStateError("reconnect circuit open")
-                if not await self._cm.ensure_connected():
+                if not await self._cm.ensure_session_connected():
                     raise _ListenerStateError("controller not connected")
                 controller = self._cm.controller
                 if controller is None:
