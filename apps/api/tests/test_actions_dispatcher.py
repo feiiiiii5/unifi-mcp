@@ -4008,3 +4008,110 @@ def test_snmp_update_translator_rejects_an_empty_update() -> None:
 def test_mgmt_get_translator_targets_the_mgmt_section() -> None:
     _, kwargs = DISPATCH_ARG_TRANSLATORS["unifi_get_mgmt_settings"]({})
     assert kwargs == {"section": "mgmt"}
+
+
+def test_firewall_group_translators_use_public_model_dialect() -> None:
+    _, create_kwargs = DISPATCH_ARG_TRANSLATORS["unifi_create_firewall_group"](
+        {"group_data": {"name": "Web", "group_type": "port-group", "members": ["443"]}}
+    )
+    _, update_kwargs = DISPATCH_ARG_TRANSLATORS["unifi_update_firewall_group"](
+        {"group_id": "g1", "update_data": {"members": ["80", "443"]}}
+    )
+
+    assert create_kwargs == {"group_data": {"name": "Web", "group_type": "port-group", "group_members": ["443"]}}
+    assert update_kwargs == {
+        "group_id": "g1",
+        "group_data": {"group_members": ["80", "443"]},
+    }
+
+
+def test_firewall_group_update_translator_rejects_type_changes() -> None:
+    with pytest.raises(ValueError, match="cannot be changed"):
+        DISPATCH_ARG_TRANSLATORS["unifi_update_firewall_group"](
+            {"group_id": "g1", "update_data": {"group_type": "address-group"}}
+        )
+
+
+@pytest.mark.parametrize("group_id", ["", "   "])
+def test_firewall_group_update_translator_rejects_blank_id(group_id: str) -> None:
+    with pytest.raises(ValueError, match="group_id is required"):
+        DISPATCH_ARG_TRANSLATORS["unifi_update_firewall_group"](
+            {"group_id": group_id, "update_data": {"name": "Renamed"}}
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "args", "preview_key"),
+    [
+        (
+            "unifi_create_firewall_group",
+            {"group_data": {"name": "Web", "group_type": "port-group", "members": ["443"]}},
+            "will_create",
+        ),
+        (
+            "unifi_update_firewall_group",
+            {"group_id": "g1", "update_data": {"members": ["80", "443"]}},
+            "proposed",
+        ),
+    ],
+)
+async def test_firewall_group_rest_previews_preserve_public_member_fields(
+    tool_name: str,
+    args: dict,
+    preview_key: str,
+) -> None:
+    factory = MagicMock()
+
+    result = await dispatch_action(
+        registry=PRODUCTION_REGISTRY,
+        factory=factory,
+        session=MagicMock(),
+        tool_name=tool_name,
+        controller_id="cid",
+        controller_products=["network"],
+        site="default",
+        args=args,
+        confirm=False,
+    )
+
+    assert isinstance(result, MutationPreview)
+    preview = result.payload["preview"][preview_key]
+    public_payload = preview["group_data"] if "group_data" in preview else preview["update_data"]
+    assert public_payload["members"]
+    assert "group_members" not in public_payload
+    factory.get_domain_manager.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_firewall_group_confirmed_update_reaches_mutation_with_controller_fields() -> None:
+    manager = MagicMock()
+    manager.update_firewall_group = AsyncMock(return_value=True)
+    factory = MagicMock()
+    factory.get_domain_manager = AsyncMock(return_value=manager)
+    session = MagicMock()
+
+    await dispatch_action(
+        registry=PRODUCTION_REGISTRY,
+        factory=factory,
+        session=session,
+        tool_name="unifi_update_firewall_group",
+        controller_id="cid",
+        controller_products=["network"],
+        site="default",
+        args={"group_id": "g1", "update_data": {"members": ["80", "443"]}},
+        confirm=True,
+        dispatch_table=build_dispatch_table(),
+    )
+
+    factory.get_domain_manager.assert_awaited_once_with(
+        session=session,
+        controller_id="cid",
+        product="network",
+        attr_name="firewall_manager",
+        site="default",
+    )
+    manager.update_firewall_group.assert_awaited_once_with(
+        group_id="g1",
+        group_data={"group_members": ["80", "443"]},
+    )

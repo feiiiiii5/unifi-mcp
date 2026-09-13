@@ -97,6 +97,7 @@ DISPATCH_OVERRIDES: dict[str, tuple[str, str]] = {
     "unifi_toggle_firewall_policy": ("firewall_manager", "toggle_firewall_policy"),
     "unifi_get_firewall_policy_details": ("firewall_manager", "get_firewall_policy_by_id"),
     "unifi_update_firewall_policy": ("firewall_manager", "update_firewall_policy"),
+    "unifi_update_firewall_group": ("firewall_manager", "update_firewall_group"),
     "unifi_reorder_firewall_policies": ("firewall_manager", "reorder_firewall_policies"),
     "unifi_update_firewall_zone": ("firewall_manager", "update_firewall_zone"),
     "unifi_delete_firewall_zone": ("firewall_manager", "delete_firewall_zone"),
@@ -242,13 +243,18 @@ class ArgTranslatorSpec:
 
     translate: ArgTranslator
     manager_parameters: frozenset[str]
+    preserve_public_preview: bool = False
 
     def __call__(self, args: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
         return self.translate(args)
 
 
-def _spec(translate: ArgTranslator, *manager_parameters: str) -> ArgTranslatorSpec:
-    return ArgTranslatorSpec(translate, frozenset(manager_parameters))
+def _spec(
+    translate: ArgTranslator,
+    *manager_parameters: str,
+    preserve_public_preview: bool = False,
+) -> ArgTranslatorSpec:
+    return ArgTranslatorSpec(translate, frozenset(manager_parameters), preserve_public_preview)
 
 
 def _rename_and_drop(
@@ -724,6 +730,27 @@ def _translate_update_firewall_policy(args: dict[str, Any]) -> tuple[tuple[Any, 
     return (), {
         "policy_id": args["policy_id"],
         "updates": normalize_policy_update(args.get("update_data") or {}),
+    }
+
+
+def _translate_create_firewall_group(args: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Validate and translate the public firewall-group create payload."""
+    from unifi_core.network.models.firewall import validate_group_create
+
+    return (), {"group_data": validate_group_create(args.get("group_data") or {})}
+
+
+def _translate_update_firewall_group(args: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Validate and translate the public firewall-group partial update."""
+    from unifi_core.network.models.firewall import validate_group_update
+
+    group_id = args.get("group_id")
+    if not isinstance(group_id, str) or not group_id.strip():
+        raise ValueError("group_id is required")
+
+    return (), {
+        "group_id": group_id,
+        "group_data": validate_group_update(args.get("update_data") or {}),
     }
 
 
@@ -1665,7 +1692,15 @@ DISPATCH_ARG_TRANSLATORS: dict[str, ArgTranslatorSpec] = {
     # Network create/update payload packing.
     "unifi_create_client_group": _spec(_translate_create_client_group, "group_data"),
     "unifi_create_firewall_group": _spec(
-        _pack_fields("group_data", frozenset({"name", "group_type", "group_members"})), "group_data"
+        _translate_create_firewall_group,
+        "group_data",
+        preserve_public_preview=True,
+    ),
+    "unifi_update_firewall_group": _spec(
+        _translate_update_firewall_group,
+        "group_id",
+        "group_data",
+        preserve_public_preview=True,
     ),
     "unifi_create_firewall_zone": _spec(_translate_firewall_zone_crud, "name"),
     "unifi_update_firewall_zone": _spec(_translate_firewall_zone_crud, "zone_id", "name"),
